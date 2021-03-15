@@ -20,116 +20,114 @@ var ttf2eot = require('ttf2eot')
  *	 done {function(err, font)} Callback that takes error or null and generated font.
  */
 var generators = {
-	svg: {
-		fn: function(options, done) {
-			var font = new Buffer(0)
-			var svgOptions = _.pick(options,
-				'fontName', 'fontHeight', 'descent', 'normalize', 'round'
-			)
+  svg: {
+    fn: function (options, done) {
+      var font = Buffer.alloc(0)
+      var svgOptions = _.pick(options, 'fontName', 'fontHeight', 'descent', 'normalize', 'round')
 
-			if (options.formatOptions['svg']) {
-				svgOptions = _.extend(svgOptions, options.formatOptions['svg'])
-			}
+      if (options.formatOptions['svg']) {
+        svgOptions = _.extend(svgOptions, options.formatOptions['svg'])
+      }
 
-			svgOptions.log = function(){}
+      svgOptions.log = function () {}
 
-			var fontStream = svgicons2svgfont(svgOptions)
-				.on('data', function(data) {
-					font = Buffer.concat([font, data])
-				})
-				.on('end', function() {
-					done(null, font.toString())
-				})
+      var fontStream = new svgicons2svgfont(svgOptions)
+        .on('data', function (data) {
+          font = Buffer.concat([font, data])
+        })
+        .on('end', function () {
+          done(null, font.toString())
+        })
 
-			_.each(options.files, function(file, idx) {
-				var glyph = fs.createReadStream(file)
-				var name = options.names[idx]
-				var unicode = String.fromCharCode(options.codepoints[name])
-                var ligature = ''
-                for(var i=0;i<name.length;i++) {
-                    ligature+=String.fromCharCode(name.charCodeAt(i))
-                }
-				glyph.metadata = {
-					name: name,
-					unicode: [unicode,ligature]
-				}
-				fontStream.write(glyph)
-			})
+      _.each(options.files, function (file, idx) {
+        var glyph = fs.createReadStream(file)
+        var name = options.names[idx]
+        var unicode = String.fromCharCode(options.codepoints[name])
+        var ligature = ''
+        for (var i = 0; i < name.length; i++) {
+          ligature += String.fromCharCode(name.charCodeAt(i))
+        }
+        glyph.metadata = {
+          name: name,
+          unicode: [unicode, ligature],
+        }
+        fontStream.write(glyph)
+      })
 
-			fontStream.end()
-		}
-	},
+      fontStream.end()
+    },
+  },
 
-	ttf: {
-		deps: ['svg'],
-		fn: function(options, svgFont, done) {
-			var font = svg2ttf(svgFont, options.formatOptions['ttf'])
-			font = new Buffer(font.buffer)
-			done(null, font)
-		}
-	},
+  ttf: {
+    deps: ['svg'],
+    fn: function (options, svgFont, done) {
+      var font = svg2ttf(svgFont, options.formatOptions['ttf'])
+      font = Buffer.from(font.buffer)
+      done(null, font)
+    },
+  },
 
-	woff: {
-		deps: ['ttf'],
-		fn: function(options, ttfFont, done) {
-			var font = ttf2woff(new Uint8Array(ttfFont), options.formatOptions['woff'])
-			font = new Buffer(font.buffer)
-			done(null, font)
-		}
-	},
+  woff: {
+    deps: ['ttf'],
+    fn: function (options, ttfFont, done) {
+      var font = ttf2woff(new Uint8Array(ttfFont), options.formatOptions['woff'])
+      font = Buffer.from(font.buffer)
+      done(null, font)
+    },
+  },
 
-	woff2: {
-		deps: ['ttf'],
-		fn: function(options, ttfFont, done) {
-			var font = ttf2woff2(new Uint8Array(ttfFont), options.formatOptions['woff2'])
-			font = new Buffer(font.buffer)
-			done(null, font)
-		}
-	},
+  woff2: {
+    deps: ['ttf'],
+    fn: function (options, ttfFont, done) {
+      var font = ttf2woff2(new Uint8Array(ttfFont), options.formatOptions['woff2'])
+      font = Buffer.from(font.buffer)
+      done(null, font)
+    },
+  },
 
-	eot: {
-		deps: ['ttf'],
-		fn: function(options, ttfFont, done) {
-			var font = ttf2eot(new Uint8Array(ttfFont), options.formatOptions['eot'])
-			font = new Buffer(font.buffer)
-			done(null, font)
-		}
-	}
+  eot: {
+    deps: ['ttf'],
+    fn: function (options, ttfFont, done) {
+      var font = ttf2eot(new Uint8Array(ttfFont), options.formatOptions['eot'])
+      font = Buffer.from(font.buffer)
+      done(null, font)
+    },
+  },
 }
 
 /**
  * @returns Promise
  */
-var generateFonts = function(options) {
-	var genTasks = {}
+var generateFonts = function (options) {
+  var genTasks = {}
 
-	/**
-	 * First, creates tasks for dependent font types.
-	 * Then creates task for specified font type and chains it to dependencies promises.
-	 * If some task already exists, it reuses it.
-	 */
-	var makeGenTask = function(type) {
-		if (genTasks[type]) return genTasks[type]
+  /**
+   * First, creates tasks for dependent font types.
+   * Then creates task for specified font type and chains it to dependencies promises.
+   * If some task already exists, it reuses it.
+   */
+  var makeGenTask = function (type) {
+    if (genTasks[type]) return genTasks[type]
 
-		var gen = generators[type]
-		var depsTasks = _.map(gen.deps, makeGenTask)
-		var task = Q.all(depsTasks).then(function(depsFonts) {
-			var args = [options].concat(depsFonts)
-			return Q.nfapply(gen.fn, args)
-		})
-		genTasks[type] = task
-		return task
-	}
+    var gen = generators[type]
+    var depsTasks = _.map(gen.deps, makeGenTask)
+    var task = Q.all(depsTasks).then(function (depsFonts) {
+      var args = [options].concat(depsFonts)
+      return Q.nfapply(gen.fn, args)
+    })
+    genTasks[type] = task
+    return task
+  }
 
-	// Create all needed generate and write tasks.
-	for (var i in options.types) {
-		var type = options.types[i]
-		makeGenTask(type)
-	}
+  // Create all needed generate and write tasks.
+  for (var i in options.types) {
+    var type = options.types[i]
+    makeGenTask(type)
+  }
 
-	return Q.all(_.values(genTasks)).then(function(results) {
-		return _.object(_.keys(genTasks), results)
-	})
+  return Q.all(_.values(genTasks)).then(function (results) {
+    return _.object(_.keys(genTasks), results)
+  })
 }
 
 module.exports = generateFonts
